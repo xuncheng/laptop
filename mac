@@ -145,7 +145,10 @@ if ! brew_is_installed "node"; then
     touch ~/.bash_profile
     curl -o- https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash
 
+    # shellcheck disable=SC2016
     append_to_file "$HOME/.zshrc" 'export NVM_DIR="$HOME/.nvm"'
+
+    # shellcheck disable=SC2016
     append_to_file "$HOME/.zshrc" '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"  # This loads nvm'
 
     . "$HOME/.nvm/nvm.sh"
