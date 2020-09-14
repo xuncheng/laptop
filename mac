@@ -83,13 +83,6 @@ else
   fancy_echo "Homebrew already installed. Skipping ..."
 fi
 
-# Remove brew-cask since it is now installed as part of brew tap caskroom/cask.
-# See https://github.com/caskroom/homebrew-cask/releases/tag/v0.60.0
-if brew_is_installed 'brew-cask'; then
-  brew uninstall --force 'brew-cask'
-  brew untap caskroom/versions
-fi
-
 fancy_echo "Updating Homebrew formulas ..."
 brew update
 
@@ -123,13 +116,9 @@ brew 'vim'
 # Image manipulation
 brew 'imagemagick'
 
-# Testing
-# This formula either does not compile or function as expected on macOS
-# versions newer than El Capitan due to an upstream incompatibility.
-# brew 'qt'
-
 # Programming languages
 brew 'libyaml' # should come after openssl
+brew 'yarn'
 
 # Databases
 brew 'redis', restart_service: true
@@ -152,9 +141,9 @@ if ! brew_is_installed "node"; then
     append_to_file "$HOME/.zshrc" '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"  # This loads nvm'
 
     . "$HOME/.nvm/nvm.sh"
-    nvm install --lts 
+    nvm install --lts
   else
-    fancy_echo 'version manager detected.  Skipping...'
+    fancy_echo 'version manager detected. Skipping...'
   fi
 else
   brew bundle --file=- <<EOF
