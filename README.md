@@ -1,6 +1,6 @@
 Laptop
 ======
-[![Build Status](https://travis-ci.org/xuncheng/laptop.svg)](https://travis-ci.org/xuncheng/laptop)
+[![Build Status](https://travis-ci.com/xuncheng/laptop.svg)](https://travis-ci.com/xuncheng/laptop)
 
 Laptop is a script to set up an OS X computer for web development.
 
@@ -11,7 +11,7 @@ based on what is already installed on the machine.
 Requirements
 ------------
 
-* macOS Sierra (10.12)
+* macOS Ventura (13.0.1)
 
 Older versions may work but aren't regularly tested. Bug reports for older
 versions are welcome.
