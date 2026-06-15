@@ -1,103 +1,57 @@
-#!/bin/sh
+#!/bin/bash
+# shellcheck disable=SC2016
 
-# Welcome to the laptop script!
-# Be prepared to turn your laptop (or desktop)
-# into an awesome development machine.
+# Welcome to the laptop script! (2026 edition)
+# Turns your macOS laptop into an awesome development machine.
+#
+# Originally created ~2016, modernized for Apple Silicon + Kitty + LazyVim.
+#
+# Usage:
+#   bash mac              # full setup
+#   bash mac --dotfiles   # also clone and install dotfiles
+
+set -euo pipefail
+
+DOTFILES_REPO="git@github.com:xuncheng/dotfiles.git"
+DOTFILES_DIR="$HOME/.dotfiles"
+SKIP_DOTFILES=true
+
+for arg in "$@"; do
+  case "$arg" in
+    --dotfiles) SKIP_DOTFILES=false ;;
+  esac
+done
+
+# --- Helper functions ---
 
 fancy_echo() {
   local fmt="$1"; shift
-
   # shellcheck disable=SC2059
   printf "\n$fmt\n" "$@"
 }
 
+# shellcheck disable=SC2016
 append_to_file() {
   local file="$1"
   local text="$2"
 
-  if [ "$file" = "$HOME/.zshrc" ]; then
-    if [ -w "$HOME/.zshrc.local" ]; then
-      file="$HOME/.zshrc.local"
-    else
-      file="$HOME/.zshrc"
-    fi
+  if [ "$file" = "$HOME/.zshrc" ] && [ -w "$HOME/.zshrc.local" ]; then
+    file="$HOME/.zshrc.local"
   fi
 
-  if ! grep -qs "^$text$" "$file"; then
+  if ! grep -Fqs "$text" "$file" 2>/dev/null; then
     printf "\n%s\n" "$text" >> "$file"
   fi
 }
 
-brew_is_installed() {
-  brew list -1 | grep -Fqx "$1"
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
 }
 
-gem_install_or_update() {
-  if gem list "$1" | grep "^$1 ("; then
-    fancy_echo "Updating %s ..." "$1"
-    gem update "$@"
-  else
-    fancy_echo "Installing %s ..." "$1"
-    gem install "$@"
-  fi
-}
-
-app_is_installed() {
-  local app_name
-  app_name=$(echo "$1" | cut -d'-' -f1)
-  find /Applications -iname "$app_name*" -maxdepth 1 | egrep '.*' > /dev/null
-}
-
-install_node() {
-  fancy_echo "Installing Nodejs..."
-  if ! command -v node > /dev/null; then
-    fancy_echo 'Installing volta and latest LTS Node.js and npm'
-    # install volta
-    curl https://get.volta.sh | bash
-    # install node
-    volta install node
-  else
-    fancy_echo 'Node already installed. Skipping ...'
-  fi
-}
-
-install_ruby() {
-  append_to_file "$HOME/.gemrc" 'gem: --no-document'
-
-  if ! command -v rbenv >/dev/null; then
-    if ! command -v rvm >/dev/null; then
-      fancy_echo 'Installing RVM and the latest Ruby...'
-      curl -L https://get.rvm.io | bash -s stable --ruby --auto-dotfiles --autolibs=enable
-      . ~/.rvm/scripts/rvm
-    else
-      local_version="$(rvm -v 2> /dev/null | awk '$2 != ""{print $2}')"
-      latest_version="$(curl -s https://raw.githubusercontent.com/rvm/rvm/stable/VERSION)"
-      if [ "$local_version" != "$latest_version" ]; then
-        fancy_echo 'Upgrading RVM...'
-        rvm get stable --auto-dotfiles --autolibs=enable --with-gems="bundler"
-      else
-        fancy_echo "Already using the latest version of RVM. Skipping..."
-      fi
-    fi
-  fi
-
-  fancy_echo 'Updating Rubygems...'
-  gem update --system
-
-  gem_install_or_update 'bundler'
-
-  fancy_echo "Configuring Bundler ..."
-  number_of_cores=$(sysctl -n hw.ncpu)
-  bundle config --global jobs $((number_of_cores - 1))
-
-  append_to_file "$HOME/.rvmrc" 'rvm_auto_reload_flag=2'
-  append_to_file "$HOME/.rvm/gemsets/global.gems" 'bundler'
-}
+# --- Pre-flight checks ---
 
 # shellcheck disable=SC2154
-trap 'ret=$?; test $ret -ne 0 && printf "failed\n\n" >&2; exit $ret' EXIT
-
-set -e
+trap 'ret=$?; test $ret -ne 0 && printf "\nSetup failed!\n" >&2; exit $ret' EXIT
 
 if [ ! -d "$HOME/.bin/" ]; then
   mkdir "$HOME/.bin"
@@ -107,77 +61,230 @@ if [ ! -f "$HOME/.zshrc" ]; then
   touch "$HOME/.zshrc"
 fi
 
-# shellcheck disable=SC2016
 append_to_file "$HOME/.zshrc" 'export PATH="$HOME/.bin:$PATH"'
 
-case "$SHELL" in
-  */zsh) : ;;
-  *)
-    fancy_echo "Changing your shell to zsh ..."
-      chsh -s "$(which zsh)"
-    ;;
-esac
+# ============================================================
+# 1. Homebrew
+# ============================================================
 
-if ! command -v brew >/dev/null; then
+if ! command_exists brew; then
   fancy_echo "Installing Homebrew ..."
-  curl -fsS \
-    'https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh' | bash
-
-  # shellcheck disable=SC2016
-  append_to_file "$HOME/.zshrc" 'export PATH="/usr/local/bin:$PATH"'
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 else
   fancy_echo "Homebrew already installed. Skipping ..."
 fi
 
-fancy_echo "Updating Homebrew formulas ..."
+# Apple Silicon vs Intel
+if [ -f "/opt/homebrew/bin/brew" ]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+  append_to_file "$HOME/.zprofile" 'eval "$(/opt/homebrew/bin/brew shellenv)"'
+elif [ -f "/usr/local/bin/brew" ]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+  append_to_file "$HOME/.zprofile" 'eval "$(/usr/local/bin/brew shellenv)"'
+fi
+
+fancy_echo "Updating Homebrew ..."
 brew update
 brew cleanup
 
-fancy_echo "Verifying the Homebrew installation..."
+fancy_echo "Verifying Homebrew installation ..."
 if brew doctor; then
-  fancy_echo "Your Homebrew installation is good to go."
+  fancy_echo "Homebrew is good to go."
 else
-  fancy_echo "Your Homebrew installation reported some errors or warnings."
-  echo "If the warnings are related to Python, you can ignore them."
-  echo "Otherwise, review the Homebrew messages to see if any action is needed."
+  fancy_echo "Homebrew reported warnings. Review above, but usually safe to continue."
 fi
 
-fancy_echo "Installing formulas and casks ..."
+# ============================================================
+# 2. CLI tools & applications
+# ============================================================
+
+fancy_echo "Installing packages via Homebrew ..."
+
 brew bundle --file=- <<EOF
-cask_args appdir: '/Applications'
-# Unix
-brew 'ctags'
-brew 'git'
-brew 'openssl'
-brew 'reattach-to-user-namespace'
-brew 'selecta'
-brew 'the_silver_searcher'
-brew 'tmux'
-brew 'tree'
-brew 'vim'
-brew 'gh'
-brew 'zsh-syntax-highlighting'
-# Image manipulation
-brew 'imagemagick'
-# Programming languages
-brew 'libyaml' # should come after openssl
-brew 'yarn'
-# Databases
-brew 'redis', restart_service: true
+# ------- Core Unix -------
+brew "git"
+brew "gh"
+brew "openssl"
+brew "tmux"
+brew "tree"
+brew "wget"
+brew "curl"
+
+# ------- Modern CLI replacements -------
+brew "ripgrep"               # grep -> rg (replaces ag/ack)
+brew "fd"                    # find replacement
+brew "fzf"                   # fuzzy finder (replaces selecta)
+brew "bat"                   # cat with syntax highlighting
+brew "eza"                   # ls replacement
+brew "jq"                    # JSON processor
+brew "delta"                 # better git diffs
+brew "zoxide"                # smarter cd
+brew "httpie"                # user-friendly HTTP client
+brew "lazygit"               # terminal UI for git
+
+# ------- Shell -------
+brew "zsh-syntax-highlighting"
+brew "zsh-autosuggestions"
+brew "starship"              # cross-shell prompt
+
+# ------- Editor: Neovim + LazyVim deps -------
+brew "neovim"
+brew "luarocks"              # LazyVim may need this
+brew "stylua"                # Lua formatter
+brew "shellcheck"            # shell script linter
+
+# ------- Terminal: Kitty -------
+cask "kitty"
+
+# ------- Development -------
+brew "libyaml"
 EOF
 
-read -p "Do you want to install Node.js? [Y/n] " yn
-if [[ $yn =~ ^[Yy] ]]; then
-  install_node
+# ============================================================
+# 3. fzf key bindings & shell integration
+# ============================================================
+
+if [ -d "$(brew --prefix)/opt/fzf" ]; then
+  "$(brew --prefix)/opt/fzf/install" --key-bindings --completion --no-update-rc --no-bash --no-fish
 fi
 
-read -p "Do you want to install Ruby? [Y/n] " yn
-if [[ $yn =~ ^[Yy] ]]; then
-  install_ruby
+# ============================================================
+# 4. Node.js via Volta
+# ============================================================
+
+fancy_echo "Setting up Node.js via Volta ..."
+
+if ! command_exists volta; then
+  curl https://get.volta.sh | bash -s -- --skip-setup
+  export VOLTA_HOME="$HOME/.volta"
+  export PATH="$VOLTA_HOME/bin:$PATH"
+  append_to_file "$HOME/.zshrc" 'export VOLTA_HOME="$HOME/.volta"'
+  append_to_file "$HOME/.zshrc" 'export PATH="$VOLTA_HOME/bin:$PATH"'
 fi
+
+if command_exists volta; then
+  volta install node@lts
+  fancy_echo "Node.js $(node --version) installed via Volta"
+else
+  fancy_echo "Volta needs a shell restart. Run 'volta install node@lts' afterward."
+fi
+
+# ============================================================
+# 5. Shell configuration
+# ============================================================
+
+fancy_echo "Configuring shell integrations ..."
+
+# starship prompt
+append_to_file "$HOME/.zshrc" 'eval "$(starship init zsh)"'
+
+# zoxide
+append_to_file "$HOME/.zshrc" 'eval "$(zoxide init zsh)"'
+
+# zsh plugins from brew
+ZSH_HL="$(brew --prefix)/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+ZSH_AS="$(brew --prefix)/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+append_to_file "$HOME/.zshrc" "[ -f \"$ZSH_HL\" ] && source \"$ZSH_HL\""
+append_to_file "$HOME/.zshrc" "[ -f \"$ZSH_AS\" ] && source \"$ZSH_AS\""
+
+# Modern aliases
+append_to_file "$HOME/.zshrc" '# Modern CLI aliases'
+append_to_file "$HOME/.zshrc" 'alias ls="eza"'
+append_to_file "$HOME/.zshrc" 'alias ll="eza -la --git"'
+append_to_file "$HOME/.zshrc" 'alias lt="eza -la --tree --level=2 --git"'
+append_to_file "$HOME/.zshrc" 'alias cat="bat --paging=never"'
+append_to_file "$HOME/.zshrc" 'alias cd="z"'
+append_to_file "$HOME/.zshrc" 'alias lg="lazygit"'
+append_to_file "$HOME/.zshrc" 'alias vim="nvim"'
+append_to_file "$HOME/.zshrc" 'alias vi="nvim"'
+
+# ============================================================
+# 6. git config (modern defaults)
+# ============================================================
+
+fancy_echo "Configuring git defaults ..."
+
+git config --global core.pager "delta"
+git config --global interactive.diffFilter "delta --color-only"
+git config --global delta.navigate true
+git config --global delta.side-by-side true
+git config --global merge.conflictStyle zdiff3
+git config --global init.defaultBranch main
+git config --global pull.rebase true
+
+# ============================================================
+# 7. Dotfiles (via dotbot)
+# ============================================================
+
+if [ "$SKIP_DOTFILES" = false ]; then
+  fancy_echo "Setting up dotfiles ..."
+
+  if [ ! -d "$DOTFILES_DIR" ]; then
+    fancy_echo "Cloning dotfiles repo ..."
+    git clone --recursive "$DOTFILES_REPO" "$DOTFILES_DIR"
+  else
+    fancy_echo "Dotfiles already cloned. Pulling latest ..."
+    cd "$DOTFILES_DIR"
+    git pull
+    git submodule update --init --recursive
+  fi
+
+  # Run dotbot
+  cd "$DOTFILES_DIR"
+  if [ -f "./install" ]; then
+    fancy_echo "Running dotbot install ..."
+    ./install
+  fi
+else
+  fancy_echo "Skipping dotfiles setup. Use --dotfiles to enable."
+fi
+
+# ============================================================
+# 8. LazyVim bootstrap
+# ============================================================
+
+LAZYVIM_DIR="$HOME/.config/nvim"
+
+if [ ! -d "$LAZYVIM_DIR" ]; then
+  fancy_echo "Bootstrapping LazyVim ..."
+  # Back up existing nvim config if it exists but isn't a directory
+  for d in "$HOME/.local/share/nvim" "$HOME/.local/state/nvim" "$HOME/.cache/nvim"; do
+    [ -d "$d" ] && mv "$d" "${d}.bak.$(date +%s)" 2>/dev/null || true
+  done
+  git clone https://github.com/LazyVim/starter "$LAZYVIM_DIR"
+  # Remove .git so you can add it to your own dotfiles
+  rm -rf "$LAZYVIM_DIR/.git"
+  fancy_echo "LazyVim installed. Customize in ~/.config/nvim/lua/"
+else
+  fancy_echo "Neovim config already exists at $LAZYVIM_DIR. Skipping LazyVim bootstrap."
+fi
+
+# ============================================================
+# 9. Kitty config directory
+# ============================================================
+
+KITTY_CONF_DIR="$HOME/.config/kitty"
+
+if [ ! -d "$KITTY_CONF_DIR" ]; then
+  mkdir -p "$KITTY_CONF_DIR"
+  fancy_echo "Created Kitty config directory at $KITTY_CONF_DIR"
+  fancy_echo "Tip: your dotfiles may symlink kitty.conf here via dotbot."
+fi
+
+# ============================================================
+# 10. Local overrides
+# ============================================================
 
 if [ -f "$HOME/.laptop.local" ]; then
+  fancy_echo "Running local customizations from ~/.laptop.local ..."
+  # shellcheck disable=SC1091
   . "$HOME/.laptop.local"
 fi
 
-fancy_echo 'All done!'
+fancy_echo "All done! Restart your terminal or run: source ~/.zshrc"
+fancy_echo ""
+fancy_echo "Next steps:"
+fancy_echo "  1. Open Kitty and verify everything looks good"
+fancy_echo "  2. Run 'nvim' to let LazyVim install plugins on first launch"
+fancy_echo "  3. Review ~/.config/nvim/lua/ for LazyVim customization"
+fancy_echo "  4. Check your dotfiles repo for any config updates needed"
